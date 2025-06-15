@@ -36,7 +36,7 @@ My approach centres on the principle of event log replay using archived event da
 # Python Code: Event Log Replay
 The following Python code simulates a replay of archived events using a failure window and produces corrected metrics:
 
-import pandas as pd
+<pre> import pandas as pd
 from datetime import datetime
 import hashlib
 
@@ -65,7 +65,7 @@ merged = pd.merge(recalculated_results,existing,on="user_id",suffixes=("_new", "
 
 merged["discrepancy"] = merged["recalculated_value"] != merged["value_old"]
 corrections_needed = merged[merged["discrepancy"] == True]
-corrections_needed[["user_id", "recalculated_value"]].to_csv("corrections_to_apply.csv", index=False)
+corrections_needed[["user_id", "recalculated_value"]].to_csv("corrections_to_apply.csv", index=False) </pre>
 
 # Alternative Simplified Approach
 # Assumptions:
@@ -82,7 +82,7 @@ Kafka, Pandas, checksums, unit tests.
 
 
 # Python snippet for simplified recovery:
-
+<pre>
 import pandas as pd
 from datetime import datetime
 
@@ -93,19 +93,19 @@ missed_events = event_log[(event_log["timestamp"] >= failure_start) &
                           (event_log["timestamp"] <= failure_end)]
 recalculated_metrics = missed_events.groupby("user_id")["value"].sum().reset_index()
 print("Recalculated Metrics During Failure:")
-print(recalculated_metrics)
+print(recalculated_metrics)</pre>
 
 # Comparison Table
+<pre>
+Criteria	          first Approach	            second Approach
 
-Criteria	        first Approach	            second Approach
-
-Source of Recovery 	S3, Kafka, HDFS	           CSV / Replayable Log
-Replay Strategy	    Offset/time-based tools	   Basic timestamp filtering
-Isolation	        Isolated env (VM/cluster)  Local batch
-Accuracy	        Hashing, versioning     	Post-hoc checks
-Scalability	        Supports millions/hr	    Limited
-Consistency	         Transactional diffs	    Simple overwrite
-Production Readiness  Enterprise-grade	        Prototype-level
+Source of Recovery 	  S3, Kafka, HDFS	            CSV / Replayable Log
+Replay Strategy	      Offset/time-based tools	    Basic timestamp filtering
+Isolation	          Isolated env (VM/cluster)     Local batch
+Accuracy	          Hashing, versioning     	    Post-hoc checks
+Scalability	          Supports millions/hr	        Limited
+Consistency	          Transactional diffs	        Simple overwrite
+Production Readiness  Enterprise-grade	            Prototype-level </pre>
 
 # Summary of Approach and Rationale:
 My approach is centred on the concept of event log replay, leveraging durable, immutable archives of event data as the ultimate source of truth. In the absence of a traditional database, this strategy enables reliable recovery from missed or misprocessed events by reapplying the original worker logic in a controlled, isolated environment. I chose this method because it ensures data integrity, supports deterministic recalculations, and aligns with industry best practices for resilient event-driven architectures.
