@@ -95,17 +95,22 @@ recalculated_metrics = missed_events.groupby("user_id")["value"].sum().reset_ind
 print("Recalculated Metrics During Failure:")
 print(recalculated_metrics)</pre>
 
-# Comparison Table
-<pre>
-Criteria	          first Approach	            second Approach
+---
 
-Source of Recovery 	  S3, Kafka, HDFS	            CSV / Replayable Log
-Replay Strategy	      Offset/time-based tools	    Basic timestamp filtering
-Isolation	          Isolated env (VM/cluster)     Local batch
-Accuracy	          Hashing, versioning     	    Post-hoc checks
-Scalability	          Supports millions/hr	        Limited
-Consistency	          Transactional diffs	        Simple overwrite
-Production Readiness  Enterprise-grade	            Prototype-level </pre>
+### **Comparison: Production-Grade vs Simplified Event Replay Strategy**
+
+| **Criteria**             | **First Approach (Enterprise-grade)**                 | **Second Approach (Prototype-level)**    |
+| ------------------------ | ----------------------------------------------------- | ---------------------------------------- |
+| **Source of Recovery**   | S3, Kafka, HDFS (durable, partitioned)                | CSV files or replayable flat logs        |
+| **Replay Strategy**      | Offset-based / timestamp filtering using Kafka/Athena | Basic time filtering using Pandas        |
+| **Isolation**            | Dedicated VM, cluster, or containerized replay        | Local batch script                       |
+| **Accuracy**             | Checksum/hash comparison, logic versioning            | Post-hoc checks only                     |
+| **Scalability**          | Can handle millions of events/hour via Spark/Kafka    | Limited to thousands of events (Pandas)  |
+| **Consistency**          | Transactional diffs, atomic updates                   | Simple overwrite logic                   |
+| **Production Readiness** | Fully production-safe, CI/CD friendly                 | Suitable for testing, debugging, or PoCs |
+
+---
+
 
 # Summary of Approach and Rationale:
 My approach is centred on the concept of event log replay, leveraging durable, immutable archives of event data as the ultimate source of truth. In the absence of a traditional database, this strategy enables reliable recovery from missed or misprocessed events by reapplying the original worker logic in a controlled, isolated environment. I chose this method because it ensures data integrity, supports deterministic recalculations, and aligns with industry best practices for resilient event-driven architectures.
@@ -131,5 +136,182 @@ This approach is designed to scale. For high-throughput systems:
 * Event partitioning by time or key ensures horizontal scalability and faster reprocessing.
 
 Overall, this method remains robust at scale and can be optimized for performance, cost, and automation in large-scale, event-driven environments.
+
+#  ML-Driven Anomaly Detection & Event Log Replay Strategy
+
+# Overview
+
+Detect missed/incorrectly processed events in an event-driven system using **AI/ML anomaly detection**, and recover them through a **replay mechanism**.
+
+## 2. System Architecture
+
+```
++-------------------+        +---------------------------+        +---------------------------+
+| Event Producers   | -----> | Event Bus (Kafka/S3/etc.) | -----> | Event Consumers / Workers |
++-------------------+        +---------------------------+        +---------------------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         | Archived Event Log (S3, Kafka) |
+                         +-------------------------------+
+                                         |
+             +--------------------------------------------------+
+             | ML-Based Anomaly Detector (Failure Window Finder)|
+             +--------------------------------------------------+
+                                         |
+                          +-----------------------------+
+                          | Replay Engine (Python/Spark)|
+                          +-----------------------------+
+                                         |
+                          +-----------------------------+
+                          | Diff Checker & Corrector     |
+                          +-----------------------------+
+```
+
+
+##  3. Step-by-Step ML & Replay Process
+
+
+###  Step 1: Load and Preprocess Event Log
+
+```python
+import pandas as pd
+
+# Load event log
+event_log = pd.read_csv("archived_events.csv", parse_dates=["timestamp"])
+
+# Add time buckets (minute/hour) for analysis
+event_log["minute"] = event_log["timestamp"].dt.floor("min")
+```
+
+
+### Step 2: Aggregate Metrics for Anomaly Detection
+
+```python
+# Aggregate event value per minute
+agg = event_log.groupby("minute")["value"].sum().reset_index()
+```
+
+###  Step 3: Train an Anomaly Detection Model
+
+We use **Isolation Forest** to detect unusual drops or spikes in event values.
+
+```python
+from sklearn.ensemble import IsolationForest
+
+model = IsolationForest(contamination=0.01, random_state=42)
+agg["anomaly"] = model.fit_predict(agg[["value"]])
+```
+
+
+###  Step 4: Visualize Anomalies
+
+```python
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10,4))
+plt.plot(agg["minute"], agg["value"], label="Event Value")
+plt.scatter(agg[agg["anomaly"] == -1]["minute"],
+            agg[agg["anomaly"] == -1]["value"], color='red', label="Anomaly")
+plt.title("Anomaly Detection on Event Value Time Series")
+plt.xlabel("Time")
+plt.ylabel("Event Value")
+plt.legend()
+plt.tight_layout()
+plt.show()
+```
+
+
+###  Step 5: Extract Failure Time Window
+
+```python
+failure_minutes = agg[agg["anomaly"] == -1]["minute"]
+failure_start = failure_minutes.min()
+failure_end = failure_minutes.max()
+print(f" Failure Window: {failure_start} to {failure_end}")
+```
+
+
+###  Step 6: Replay Events Within Failure Window
+
+```python
+# Filter missed events
+missed_events = event_log[
+    (event_log["timestamp"] >= failure_start) &
+    (event_log["timestamp"] <= failure_end)
+]
+
+# Replay logic (e.g., recalculate totals per user)
+recalculated = missed_events.groupby("user_id")["value"].sum().reset_index()
+recalculated.columns = ["user_id", "recalculated_value"]
+```
+
+
+###  Step 7: Compare with Live Data & Generate Diffs
+
+```python
+existing = pd.read_csv("existing_results.csv")  # pre-existing values
+merged = pd.merge(recalculated, existing, on="user_id", how="outer", suffixes=("_new", "_old"))
+
+merged["discrepancy"] = merged["recalculated_value"] != merged["value_old"]
+corrections = merged[merged["discrepancy"] == True]
+
+# Export corrections to apply
+corrections[["user_id", "recalculated_value"]].to_csv("corrections.csv", index=False)
+```
+
+
+##  Tools & Technologies
+
+| Purpose             | Tool                  |
+| ------------------- | --------------------- |
+| Event Archive       | S3, Kafka, HDFS       |
+| Data Processing     | Pandas, Apache Spark  |
+| ML Modeling         | Scikit-learn          |
+| Visualization       | Matplotlib            |
+| Replay Engine       | Python Batch Job      |
+| Optional Extensions | Airflow, Dagster, DVC |
+
+
+## Testing & Validation Strategy
+
+1. **Backtesting**: Apply ML to known failure periods and verify accuracy.
+2. **Replay on Sandbox**: Run recalculations on test data first.
+3. **Checksum Comparison**: Use MD5/SHA hashing for data consistency.
+4. **Transactional Update**: Apply diffs atomically to avoid partial corrections.
+
+##  Scalability Considerations
+
+| Component     | Scale Strategy                 |
+| ------------- | ------------------------------ |
+| Event Archive | Partitioned S3/Kafka           |
+| ML Detection  | Time-bucketed training         |
+| Replay        | Spark or multi-threaded Python |
+| Validation    | Parallel hash checks           |
+
+
+##  Benefits
+
+*  Automated failure detection
+*  Fast, accurate recovery
+*  Works at scale with S3/Kafka/Spark
+*  No need for traditional DB storage
+*  Real-time integration possible
+
+##  Trade-offs
+
+* More storage (long-term event logs)
+* ML false positives/negatives need tuning
+* Requires idempotent business logic
+* Operational overhead for managing pipelines
+
+##  Summary
+
+By combining **AI/ML anomaly detection** with a **deterministic event replay strategy**, we ensure:
+
+* **Data integrity**
+* **Resilient recovery** from failures
+* **Scalable event processing**
+* **Minimal business disruption**
 
 
